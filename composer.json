@@ -1,0 +1,17 @@
+{
+    "name": "artnum/pjapi",
+    "authors": [{
+        "name": "tienne Bagnoud",
+        "email": "etienne@artisan-numerique.ch",
+        "role": "Developer"
+    }],
+    "license": "MIT",
+    "description": "A simple JSON API for PHP", 
+    "type": "project", 
+    "require": { "php": "^8.2"}, 
+    "autoload": { 
+        "psr-4": { 
+            "PJAPI\\": "src/"
+        } 
+    } 
+}

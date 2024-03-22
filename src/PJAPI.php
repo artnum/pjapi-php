@@ -12,7 +12,6 @@ use ArrayIterator;
 
 const JAPI_VERSION = 100;
 const ERR_BAD_REQUEST = 400;
-const ERR_BAD_ROUTE = 404;
 const ERR_INTERNAL = 500;
 
 class PJAPIIterator implements Iterator {
@@ -34,7 +33,7 @@ class PJAPIIterator implements Iterator {
 
     private function loadRouteFile (string $file) {
         if (is_readable($file) === false) {
-            throw new Exception('Invalid namespace', 404);
+            throw new Exception('Invalid namespace', ERR_BAD_REQUEST);
         }
 
         $result = call_user_func_array(function ($file, $env) {
@@ -42,7 +41,7 @@ class PJAPIIterator implements Iterator {
             return require_once $file;
         }, [$file, ['PJAPI' => $this->pjapi, 'PJAPILoader' => true]]);
         if (is_object($result) === false) {
-            throw new Exception('Invalid namespace', 404);
+            throw new Exception('Invalid namespace', ERR_BAD_REQUEST);
         }
         return $result;
     }
@@ -165,10 +164,10 @@ class PJAPI {
 
     public function __construct(string $routeDirectory) {
         if (is_dir($routeDirectory) === false) {
-            throw new Exception('Invalid route directory');
+            throw new Exception('Invalid route directory', ERR_BAD_REQUEST);
         }
         if (is_readable($routeDirectory) === false) {
-            throw new Exception('Invalid route directory');
+            throw new Exception('Invalid route directory', ERR_BAD_REQUEST);
         }
         $this->routeDirectory = $routeDirectory;
         $this->boundary = 'PJAPI' . md5(uniqid());
@@ -190,7 +189,7 @@ class PJAPI {
     }
 
     private function emitError (Throwable $e) {
-        printf('{"error":true, "message": %s, "version": %d}', json_encode($e->getMessage()), JAPI_VERSION);
+        printf('{"error":true, "message": %s, "version": %d, "code": %d}', json_encode($e->getMessage()), JAPI_VERSION, $e->getCode());
         error_log($e->getMessage() . ' ' . $e->getFile() . ' ' . $e->getLine() . PHP_EOL . $e->getTraceAsString());
         for ($e = $e->getPrevious(); $e !== null; $e = $e->getPrevious()) {
             error_log($e->getMessage() . ' ' . $e->getFile() . ' ' . $e->getLine() . PHP_EOL . $e->getTraceAsString());
@@ -222,6 +221,7 @@ class PJAPI {
                         $this->endPart();
                         continue;
                     }
+                    
                     if ($item[1] instanceof Generator 
                             || $item[1] instanceof Iterator
                             || is_array($item[1])) {
@@ -237,8 +237,6 @@ class PJAPI {
                             } while($item[1]->valid() && print(','));
                             echo ']}}';
                             $this->endPart();
-
-
                         }
                     } else {
                         $this->startPart();

@@ -89,8 +89,8 @@ class PJAPIIterator implements Iterator {
                     || preg_match('/^[[:alnum:]][[:alnum:]_]+/', $this->payload->{$this->keys[$this->step]}->ns) === 0) {
                 throw new Exception('Invalid namespace', ERR_BAD_REQUEST);
             }
-            if (preg_match('/^[[:alnum:]][[:alnum:]:\.\-_]+/', $this->keys[$this->step]) === 0) {
-                throw new Exception('Invalid operation', ERR_BAD_REQUEST);
+            if (preg_match('/^[[:alnum:]:\.\-_]+/', $this->keys[$this->step]) === 0) {
+                throw new Exception('Invalid operation ' . $this->keys[$this->step], ERR_BAD_REQUEST);
             }
             $namespace = $this->payload->{$this->keys[$this->step]}->ns;
             $ns = null;
@@ -221,7 +221,6 @@ class PJAPI {
                         $this->endPart();
                         continue;
                     }
-                    
                     if ($item[1] instanceof Generator 
                             || $item[1] instanceof Iterator
                             || is_array($item[1])) {
@@ -236,6 +235,10 @@ class PJAPI {
                                 $item[1]->next();
                             } while($item[1]->valid() && print(','));
                             echo ']}}';
+                            $this->endPart();
+                        } else {
+                            $this->startPart();
+                            printf('{"%s": {"error": false, "result": []}}', $item[0]);
                             $this->endPart();
                         }
                     } else {

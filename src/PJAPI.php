@@ -231,9 +231,18 @@ class PJAPI {
                             $this->startPart();
                             printf('{"%s": {"error": false, "result": [', $item[0]);    
                             do {
-                                print(json_encode($item[1]->current()));
+                                $doPrint = true;
+                                /* in case of error in a single item, we skip it */
+                                $encoded = json_encode($item[1]->current());
+                                if ($encoded === false) {
+                                    $item[1]->next();
+                                    error_log('Invalid JSON encoding ' . json_last_error_msg());
+                                    $doPrint = false;
+                                    continue;
+                                }
+                                print($encoded);
                                 $item[1]->next();
-                            } while($item[1]->valid() && print(','));
+                            } while($item[1]->valid() && ($doPrint ? print(',') : true));
                             echo ']}}';
                             $this->endPart();
                         } else {
@@ -243,7 +252,15 @@ class PJAPI {
                         }
                     } else {
                         $this->startPart();
-                        printf('{"%s": {"error": false, "result": %s}}', $item[0], json_encode($item[1]));
+                        $encoded = json_encode($item[1]);
+                        if ($encoded === false) {
+                            error_log('Invalid JSON encoding ' . json_last_error_msg());
+                            $this->emitError(new Exception('Invalid JSON encoding', ERR_INTERNAL));
+                            $this->endPart();
+                            continue;
+                        }
+
+                        printf('{"%s": {"error": false, "result": %s}}', $item[0], $encoded);
                         $this->endPart();
                     }
                     $success++;

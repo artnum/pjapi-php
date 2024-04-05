@@ -188,7 +188,7 @@ class PJAPI {
         }
     }
 
-    private function emitError (Throwable $e) {
+    protected function emitError (Throwable $e) {
         printf('{"error":true, "message": %s, "version": %d, "code": %d}', json_encode($e->getMessage()), JAPI_VERSION, $e->getCode());
         error_log($e->getMessage() . ' ' . $e->getFile() . ' ' . $e->getLine() . PHP_EOL . $e->getTraceAsString());
         for ($e = $e->getPrevious(); $e !== null; $e = $e->getPrevious()) {

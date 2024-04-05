@@ -85,13 +85,18 @@ class PJAPIIterator implements Iterator {
 
     public function current():mixed {
         try {
+            if (preg_match('/^[[:alnum:]:\.\-_]+/', $this->keys[$this->step]) === 0) {
+                throw new Exception('Invalid id ' . $this->keys[$this->step], ERR_BAD_REQUEST);
+            }
             if (!isset($this->payload->{$this->keys[$this->step]}->ns)
                     || preg_match('/^[[:alnum:]][[:alnum:]_]+/', $this->payload->{$this->keys[$this->step]}->ns) === 0) {
                 throw new Exception('Invalid namespace', ERR_BAD_REQUEST);
             }
-            if (preg_match('/^[[:alnum:]:\.\-_]+/', $this->keys[$this->step]) === 0) {
-                throw new Exception('Invalid operation ' . $this->keys[$this->step], ERR_BAD_REQUEST);
+            if (!isset($this->payload->{$this->keys[$this->step]}->function)
+                    || preg_match('/^[[:alnum:]][[:alnum:]_\:]+/', $this->payload->{$this->keys[$this->step]}->ns) === 0) {
+                throw new Exception('Invalid operation', ERR_BAD_REQUEST);
             }
+
             $namespace = $this->payload->{$this->keys[$this->step]}->ns;
             $ns = null;
             if (isset($this->namespaces[$namespace])) {

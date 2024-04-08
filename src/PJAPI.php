@@ -121,17 +121,28 @@ class PJAPIIterator implements Iterator {
             if (!$reflection->hasMethod($operation)) {
                 throw new Exception('Invalid operation', ERR_BAD_REQUEST);
             }
-            $neededArgs = $reflection->getMethod($operation)->getParameters();
+            $functionArgs = array_map(
+                function($arg) {
+                    return [
+                        'name' => $arg->name,
+                        'optional' => (!$arg->isOptional() && !$arg->isDefaultValueAvailable() && !$arg->isVariadic())
+                    ];
+                },
+                $reflection->getMethod($operation)->getParameters()
+            );
             $args = [];
-            if (count($neededArgs) > 0) {
+            if (count($functionArgs) > 0) {
                 if (!isset($this->payload->{$this->keys[$this->step]}->arguments)) {
                     throw new Exception('Missing arguments ' . $operation, ERR_BAD_REQUEST);
                 }
-                foreach ($neededArgs as $arg) {
-                    if (!isset($this->payload->{$this->keys[$this->step]}->arguments->{$arg->name})) {
-                        throw new Exception('Missing argument ' . $arg->name . ' ' . $operation, ERR_BAD_REQUEST);
+                foreach ($functionArgs as $arg) {
+                    if (
+                        $args['optional'] === false
+                        && !isset($this->payload->{$this->keys[$this->step]}->arguments->{$arg['name']})
+                    ) {
+                        throw new Exception('Missing argument ' . $arg['name'] . ' ' . $operation, ERR_BAD_REQUEST);
                     }
-                    $args[$arg->name] = $this->payload->{$this->keys[$this->step]}->arguments->{$arg->name};
+                    $args[$arg['name']] = $this->payload->{$this->keys[$this->step]}->arguments->{$arg['name']};
                 }
             }
 

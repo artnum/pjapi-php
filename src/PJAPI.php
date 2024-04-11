@@ -137,7 +137,7 @@ class PJAPIIterator implements Iterator {
                 }
                 foreach ($functionArgs as $arg) {
                     if (
-                        $args['optional'] === false
+                        $arg['optional'] === false
                         && !isset($this->payload->{$this->keys[$this->step]}->arguments->{$arg['name']})
                     ) {
                         throw new Exception('Missing argument ' . $arg['name'] . ' ' . $operation, ERR_BAD_REQUEST);

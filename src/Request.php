@@ -18,10 +18,7 @@ class Request
             if (!isset($_SERVER['CONTENT_TYPE']) || $_SERVER['CONTENT_TYPE'] !== 'application/json') {
                 throw new Exception('Invalid content type');
             }
-            if (!isset($_SERVER['HTTPS']) || $_SERVER['HTTPS'] !== 'on') {
-                throw new Exception('Invalid protocol');
-            }
-      
+
             $content = file_get_contents('php://input');
             $body = json_decode($content);
             if (!isset($body->version)

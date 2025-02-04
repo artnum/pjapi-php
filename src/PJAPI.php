@@ -129,23 +129,30 @@ class PJAPIIterator implements Iterator {
                 function($arg) {
                     return [
                         'name' => $arg->name,
-                        'optional' => (!$arg->isOptional() && !$arg->isDefaultValueAvailable() && !$arg->isVariadic())
+                        'optional' => ($arg->isOptional() || $arg->isDefaultValueAvailable() || $arg->isVariadic()) ? true : false
                     ];
                 },
                 $reflection->getMethod($operation)->getParameters()
             );
             $args = [];
             if (count($functionArgs) > 0) {
-                if (!isset($this->payload->{$this->keys[$this->step]}->arguments)) {
-                    throw new Exception('Missing arguments ' . $operation, ERR_BAD_REQUEST);
-                }
                 foreach ($functionArgs as $arg) {
+                    /* optional argument, it's not set, skip it */
+                    if (
+                        $arg['optional']
+                        && !isset($this->payload->{$this->keys[$this->step]}->arguments->{$arg['name']}) 
+                    )
+                    {
+                        continue;
+                    }
+                    /* not optional and not set, throw an error */
                     if (
                         $arg['optional'] === false
                         && !isset($this->payload->{$this->keys[$this->step]}->arguments->{$arg['name']})
                     ) {
                         throw new Exception('Missing argument ' . $arg['name'] . ' ' . $operation, ERR_BAD_REQUEST);
                     }
+                    /* argument is set, so set it */
                     $args[$arg['name']] = $this->payload->{$this->keys[$this->step]}->arguments->{$arg['name']};
                 }
             }

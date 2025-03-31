@@ -21,14 +21,30 @@ class PJAPIIterator implements Iterator {
     private array $keys = [];
     private array $namespaces = [];
     private PJAPI $pjapi;
+    private mixed $context = null;
 
-    public function __construct(string $routeDirectory, object|array $payload, PJAPI $pjapi) {
+    /**
+     * 
+     * @param string $routeDirectory 
+     * @param object|array $payload 
+     * @param PJAPI $pjapi 
+     * @param mixed|null $context Context coming from user code.
+     * @return void 
+     */
+
+    public function __construct(
+            string $routeDirectory,
+            object|array $payload,
+            PJAPI $pjapi,
+            mixed $context = NULL
+    ) {
         $this->routeDirectory = $routeDirectory;
         $this->payload = $payload;
         $this->step = 0;
         $this->keys = array_keys(get_object_vars($payload));
         $this->namespaces = [];
         $this->pjapi = $pjapi;
+        $this->context = $context;
     }
 
     private function loadRouteFile (string $file) {
@@ -36,10 +52,19 @@ class PJAPIIterator implements Iterator {
             throw new Exception('Invalid namespace', ERR_BAD_REQUEST);
         }
 
-        $result = call_user_func_array(function ($file, $env) {
-            extract($env);
-            return require_once $file;
-        }, [$file, ['PJAPI' => $this->pjapi, 'PJAPILoader' => true]]);
+        $result = call_user_func_array(
+            function ($file, $env) {
+                extract($env);
+                return require_once $file;
+            }, [
+                $file,
+                [
+                'PJAPI' => $this->pjapi,
+                'PJAPILoader' => true,
+                'AppContext' => $this->context
+                ]
+            ]
+        );
         if (is_object($result) === false) {
             throw new Exception('Invalid namespace', ERR_BAD_REQUEST);
         }
@@ -189,7 +214,6 @@ class PJAPI {
      * problem to have = char in boundary.
      */
     const BOUNDARY_RAND_BYTES = 9;
-    const CHUNK_SIZE = 4096;
     protected Request $request;
     protected string $routeDirectory;
     protected PJAPIIterator $iterator;
@@ -225,9 +249,7 @@ class PJAPI {
     {
         if (!isset($this->partbuffer[$stream])) { return false; }
         $this->partbuffer[$stream] .= $string;
-        if (strlen($this->partbuffer[$stream]) >= self::CHUNK_SIZE) {
-            $this->flushStream($stream);
-        }
+        $this->flushStream($stream);
         return true;
     }
 
@@ -278,12 +300,12 @@ class PJAPI {
         fastcgi_finish_request();
     }
 
-    public function init () {
+    public function init (mixed $context = null) {
         try {
             header('Content-Type: multipart/mixed; boundary=--' . $this->boundary, true);
             $this->request = new Request();
             $payload = $this->request->getPayload();
-            $this->iterator = new PJAPIIterator($this->routeDirectory, $payload, $this);
+            $this->iterator = new PJAPIIterator($this->routeDirectory, $payload, $this, $context);
         } catch (Exception $e) {
             $stream = $this->openJsonStream();
             $this->emitError($stream, $e);

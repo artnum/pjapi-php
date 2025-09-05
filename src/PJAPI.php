@@ -5,223 +5,45 @@ namespace PJAPI;
 use Exception;
 use Throwable;
 use Iterator;
-use ReflectionClass;
 use stdClass;
 use Generator;
 use ArrayIterator;
 
 const JAPI_VERSION = 100;
+/* ues http error value, can fit into legacy code */
 const ERR_BAD_REQUEST = 400;
 const ERR_INTERNAL = 500;
+const ERR_FORBIDDEN = 403;
+const ERR_DUPLICATE = 409;
 
-class PJAPIIterator implements Iterator {
-    private string $routeDirectory;
-    private object|array $payload;
-    private int $step;
-    private array $keys = [];
-    private array $namespaces = [];
-    private PJAPI $pjapi;
-    private mixed $context = null;
 
-    /**
-     * 
-     * @param string $routeDirectory 
-     * @param object|array $payload 
-     * @param PJAPI $pjapi 
-     * @param mixed|null $context Context coming from user code.
-     * @return void 
-     */
-
-    public function __construct(
-            string $routeDirectory,
-            object|array $payload,
-            PJAPI $pjapi,
-            mixed $context = NULL
-    ) {
-        $this->routeDirectory = $routeDirectory;
-        $this->payload = $payload;
-        $this->step = 0;
-        $this->keys = array_keys(get_object_vars($payload));
-        $this->namespaces = [];
-        $this->pjapi = $pjapi;
-        $this->context = $context;
-    }
-
-    private function loadRouteFile (string $file) {
-        if (is_readable($file) === false) {
-            throw new Exception('Invalid namespace', ERR_BAD_REQUEST);
-        }
-
-        $result = call_user_func_array(
-            function ($file, $env) {
-                extract($env);
-                return require_once $file;
-            }, [
-                $file,
-                [
-                'PJAPI' => $this->pjapi,
-                'PJAPILoader' => true,
-                'AppContext' => $this->context
-                ]
-            ]
-        );
-        if (is_object($result) === false) {
-            throw new Exception('Invalid namespace', ERR_BAD_REQUEST);
-        }
-        return $result;
-    }
-
-    private function helpOperation (stdClass $request, object $ns) {
-        if (!str_starts_with($request->function, 'HELP:')) { return false; }
-        $operation = substr($request->function, 5);
-        $help = new stdClass();
-        $help->function =  $operation;
-        $help->args = [];
-        $help->return = 'void';
-
-        $reflection = new ReflectionClass(get_class($ns));
-        if (!$reflection->hasMethod($operation)) {
-            $help->function = 'Invalid operation';
-            return $help;
-        }
-        $reflection = $reflection->getMethod($operation);
-        $neededArgs = $reflection->getParameters();
-        foreach ($neededArgs as $arg) {
-            $help->args = [
-                'name' => $arg->name,
-                'type' => strval($arg->getType()),
-                'optional' => $arg->isOptional()
-            ];
-        }
-        $help->return = strval($reflection->getReturnType());
-        return [$this->keys[$this->step], $help];
-    }
-
-    private function helpNS (stdClass $request, object $ns) {
-        if ($request->function !== 'HELP') { return false; }
-        $help = new stdClass();
-        $help->functions = [];
-        $reflection = new ReflectionClass(get_class($ns));
-        $methods = $reflection->getMethods();
-        foreach ($methods as $method) {
-            if (!$method->isPublic() || $method->name === '__construct' || $method->name === '__destruct') {
-                continue;
-            }
-            $help->functions[] = $method->name;
-        }
-        return [$this->keys[$this->step], $help];
-    }
-
-    public function current():mixed {
-        try {
-            if (preg_match('/^[[:alnum:]:\.\-_]+/', $this->keys[$this->step]) === 0) {
-                throw new Exception('Invalid id ' . $this->keys[$this->step], ERR_BAD_REQUEST);
-            }
-            if (!isset($this->payload->{$this->keys[$this->step]}->ns)
-                    || preg_match('/^[[:alnum:]][[:alnum:]_]+/', $this->payload->{$this->keys[$this->step]}->ns) === 0) {
-                throw new Exception('Invalid namespace', ERR_BAD_REQUEST);
-            }
-            if (!isset($this->payload->{$this->keys[$this->step]}->function)
-                    || preg_match('/^[[:alnum:]][[:alnum:]_\:]+/', $this->payload->{$this->keys[$this->step]}->ns) === 0) {
-                throw new Exception('Invalid operation', ERR_BAD_REQUEST);
-            }
-
-            $namespace = $this->payload->{$this->keys[$this->step]}->ns;
-            $ns = null;
-            if (isset($this->namespaces[$namespace])) {
-                $ns = $this->namespaces[$namespace];
-            } else {
-                $ns = $this->loadRouteFile($this->routeDirectory . '/' . $namespace . '.php');
-                $this->namespaces[$namespace] = $ns;
-            }
-
-            $isHelpNS = $this->helpNS($this->payload->{$this->keys[$this->step]}, $ns);
-            if ($isHelpNS !== false) {
-                return $isHelpNS;
-            }
-
-            $isHelpOperation = $this->helpOperation($this->payload->{$this->keys[$this->step]}, $ns);
-            if ($isHelpOperation !== false) {
-                return $isHelpOperation;
-            }
-            $operation = $this->payload->{$this->keys[$this->step]}->function;
- 
-            $reflection = new ReflectionClass(get_class($ns));
-            if (!$reflection->hasMethod($operation)) {
-                throw new Exception('Invalid operation', ERR_BAD_REQUEST);
-            }
-            $functionArgs = array_map(
-                function($arg) {
-                    return [
-                        'name' => $arg->name,
-                        'optional' => ($arg->isOptional() || $arg->isDefaultValueAvailable() || $arg->isVariadic()) ? true : false
-                    ];
-                },
-                $reflection->getMethod($operation)->getParameters()
-            );
-            $args = [];
-            if (count($functionArgs) > 0) {
-                foreach ($functionArgs as $arg) {
-                    /* optional argument, it's not set, skip it */
-                    if (
-                        $arg['optional']
-                        && !isset($this->payload->{$this->keys[$this->step]}->arguments->{$arg['name']}) 
-                    )
-                    {
-                        continue;
-                    }
-                    /* not optional and not set, throw an error */
-                    if (
-                        $arg['optional'] === false
-                        && !isset($this->payload->{$this->keys[$this->step]}->arguments->{$arg['name']})
-                    ) {
-                        throw new Exception('Missing argument ' . $arg['name'] . ' ' . $operation, ERR_BAD_REQUEST);
-                    }
-                    /* argument is set, so set it */
-                    $args[$arg['name']] = $this->payload->{$this->keys[$this->step]}->arguments->{$arg['name']};
-                }
-            }
-
-            return [$this->keys[$this->step], call_user_func_array([$ns, $operation], $args)];
-        } catch (Throwable $e) {
-            return [$this->keys[$this->step], $e];
-        }
-    }
-
-    public function key():mixed {
-        return $this->step;
-    }
-
-    public function next():void {
-        $this->step++;
-    }
-
-    public function rewind():void {
-        $this->step = 0;
-    }
-
-    public function valid(): bool {
-        if ($this->step >= count($this->keys)) {
-            return false;
-        }
-        return true;
-    }
-}
-
-class PJAPI {
-    /* as it's converted to base64 use multiple of 3 to avoid padding. The 
-     * default pad char is = which has meaning in HTTP, even if it poses no 
+class PJAPI
+{
+    /* as it's converted to base64 use multiple of 3 to avoid padding. The
+     * default pad char is = which has meaning in HTTP, even if it poses no
      * problem to have = char in boundary.
      */
-    const BOUNDARY_RAND_BYTES = 9;
+    public const BOUNDARY_RAND_BYTES = 9;
     protected Request $request;
     protected string $routeDirectory;
     protected PJAPIIterator $iterator;
     private string $boundary;
     private array $partbuffer;
     private int $partbuffer_count;
+    private bool $debug;
 
-    public function __construct(string $routeDirectory) {
+    /**
+     * Class constructor, obviously, it initialize stuff
+     *
+     * @param $routeDirectory Path to where all routes are storede. It's
+     *                        one file per route. A route is a namepsace
+     *                        that provides any number of function that
+     *                        can be called.
+     * @param $debug          Is in debug mode
+     */
+    public function __construct(string $routeDirectory, bool $debug = false)
+    {
+        $this->debug = $debug;
         if (is_dir($routeDirectory) === false) {
             throw new Exception('Invalid route directory', ERR_BAD_REQUEST);
         }
@@ -235,72 +57,120 @@ class PJAPI {
          * PHP.
          * - for some reason, base64_encode is a bit faster than bin2hex.
          */
-        $this->boundary = 'PJAPI-' . base64_encode(random_bytes(self::BOUNDARY_RAND_BYTES));
+        $this->boundary = 'PJAPI-' . base64_encode(
+            random_bytes(self::BOUNDARY_RAND_BYTES)
+        );
         $this->partbuffer = [];
         $this->partbuffer_count = 0;
     }
 
-    public function printf(int $stream, string $string, ...$format)
+    /**
+     * Print a formated string, use vsprintf.
+     *
+     * @param int    $stream    The stream to print out
+     * @param string $string    The string to print with formatting tag
+     * @param mixed  ...$format Variable arguments
+     *
+     * @return void
+     */
+    public function printf(int $stream, string $string, ...$format): void
     {
         $this->print($stream, vsprintf($string, $format));
     }
 
-    public function print (int $stream, string $string)
+    public function print(int $stream, string $string): bool
     {
-        if (!isset($this->partbuffer[$stream])) { return false; }
+        if (!isset($this->partbuffer[$stream])) {
+            return false;
+        }
         $this->partbuffer[$stream] .= $string;
-        $this->flushStream($stream);
         return true;
     }
 
-    public function flushStream(int $stream) {
-        if (!isset($this->partbuffer[$stream])) { return; }
-        echo $this->partbuffer[$stream];
-        $this->partbuffer[$stream] = '';
-        flush();
-    }
-
-    protected function emitError (int $stream, Throwable $e) {
-        $this->printf($stream, '{"error":true, "message": %s, "version": %d, "code": %d}', json_encode($e->getMessage()), JAPI_VERSION, $e->getCode());
-        error_log($e->getMessage() . ' ' . $e->getFile() . ' ' . $e->getLine() . PHP_EOL . $e->getTraceAsString());
+    /**
+     * Emit an error to the client, also log the whole stack trace
+     *
+     * @param int       $stream The stream to receive the error.
+     * @param Throwable $e      The exception to be sent
+     *
+     * @return void
+     */
+    protected function emitError(int $stream, Throwable $e): void
+    {
+        $message = 'An error occured';
+        if ($this->debug) {
+            $message = $e->getMessage();
+        } elseif ($e instanceof UserFacingException) {
+            $message = $e->getMessage();
+        }
+        $this->printf(
+            $stream,
+            '{"error":true, "message": %s, "version": %d, "code": %d}',
+            json_encode($message),
+            JAPI_VERSION,
+            $e->getCode()
+        );
+        error_log(
+            $e->getMessage()
+            . ' '
+            . $e->getFile()
+            . ' '
+            . $e->getLine()
+            . PHP_EOL
+            . $e->getTraceAsString()
+        );
         for ($e = $e->getPrevious(); $e !== null; $e = $e->getPrevious()) {
-            error_log($e->getMessage() . ' ' . $e->getFile() . ' ' . $e->getLine() . PHP_EOL . $e->getTraceAsString());
+            error_log(
+                $e->getMessage()
+                . ' '
+                . $e->getFile()
+                . ' '
+                . $e->getLine()
+                . PHP_EOL
+                . $e->getTraceAsString()
+            );
         }
     }
 
-    public function openStream($type = 'application/json; charset=utf-8'): int
+    public function openStream(string $type = 'application/json; charset=utf-8'): int
     {
         $current_part = $this->partbuffer_count++;
-        $this->partbuffer[$current_part] = 
-            "--" . $this->boundary . "\r\n"
+        $this->partbuffer[$current_part]
+            = "--" . $this->boundary . "\r\n"
             . 'Content-Type: ' . $type . "\r\n\r\n";
-        
+
         return $current_part;
     }
 
-    public function openTextStream():int {
+    public function openTextStream(): int
+    {
         return $this->openStream('plain/text; charset=utf-8');
     }
 
-    public function openJsonStream():int {
+    public function openJsonStream(): int
+    {
         return $this->openStream('application/json; charset=utf-8');
     }
 
-    public function closeStream(int $stream) {
-        if (!isset($this->partbuffer[$stream])) { return; }
-        $this->partbuffer[$stream] .= "\r\n";
-        $this->flushStream($stream);
+    public function closeStream(int $stream): void
+    {
+        if (!isset($this->partbuffer[$stream])) {
+            return;
+        }
+        echo $this->partbuffer[$stream] . "\r\n";
         unset($this->partbuffer[$stream]);
+        flush();
     }
 
-    public function closeRequest()
+    public function closeRequest(): void
     {
         echo '--' . $this->boundary . "--\r\n";
         flush();
         fastcgi_finish_request();
     }
 
-    public function init (mixed $context = null) {
+    public function init(mixed $context = null): void
+    {
         try {
             header('Content-Type: multipart/mixed; boundary=--' . $this->boundary, true);
             $this->request = new Request();
@@ -315,7 +185,41 @@ class PJAPI {
         }
     }
 
-    public function run () {
+    /**
+     * Filter object, remove keys starting with _.
+     *
+     * @param stdClass $object The object to be filtered
+     *
+     * @return stdClass A filtered object
+     */
+    protected function filter(stdClass $object): stdClass
+    {
+        foreach ($object as $key => $value) {
+            if (str_starts_with($key, '_')) {
+                unset($object->key);
+            } else {
+                if (is_object($value)) {
+                    $this->filter($value);
+                }
+            }
+        }
+        return $object;
+    }
+
+    /**
+     * Filter and encode an object to JSON
+     *
+     * @param stdClass $object The object to be encoded
+     *
+     * @return string The encoded json object
+     */
+    protected function encode(stdClass $object): string
+    {
+        return json_encode($this->filter($object));
+    }
+
+    public function run(): void
+    {
         $success = 0;
         $error = 0;
         try {
@@ -329,7 +233,7 @@ class PJAPI {
                     $this->closeStream($streamid);
                     continue;
                 }
-                if ($item[1] instanceof Generator 
+                if ($item[1] instanceof Generator
                         || $item[1] instanceof Iterator
                         || is_array($item[1])) {
                     if (is_array($item[1])) {
@@ -341,7 +245,7 @@ class PJAPI {
                         do {
                             $doPrint = true;
                             /* in case of error in a single item, we skip it */
-                            $encoded = json_encode($item[1]->current());
+                            $encoded = $this->encode($item[1]->current());
                             if ($encoded === false) {
                                 $item[1]->next();
                                 error_log('Invalid JSON encoding ' . json_last_error_msg());
@@ -350,7 +254,7 @@ class PJAPI {
                             }
                             $this->print($streamid, $encoded);
                             $item[1]->next();
-                        } while($item[1]->valid() && ($doPrint ? $this->print($streamid, ',') : true));
+                        } while ($item[1]->valid() && ($doPrint ? $this->print($streamid, ',') : true));
                         $this->print($streamid, ']}}');
                         $this->closeStream($streamid);
                     } else {
@@ -360,7 +264,7 @@ class PJAPI {
                     }
                 } else {
                     $streamid = $this->openJsonStream();
-                    $encoded = json_encode($item[1]);
+                    $encoded = $this->encode($item[1]);
                     if ($encoded === false) {
                         error_log('Invalid JSON encoding ' . json_last_error_msg());
                         $this->print($streamid, '{"' . $item[0] . '":');
